@@ -1,65 +1,65 @@
-# Applies naive fourier transform using actual piano frequencies, using a generated sin-wave audio spectrum.
+# Applies naive fourier transform using actual piano frequencies, using a generated sin-wave audio spectrum,
+# and finds the interval during which the stroke is active.
 
 import math
 import random
 from piano import PIANO_KEYS
 from util import * 
 
-sampling_rate = 2048        # samples per second.
+sampling_rate = 1024        # samples per second.
 key_threshold = 0.45         # threshold of a key to be recognized.
 
-audio_duration = 1
-key_strokes = 8
-key_max_duration = (1, 8)
+audio_duration = 16
+key_strokes = 16
+key_max_duration = (0.5, 8)
 key_interval = 0.5
 
-# test parameters
-test_runs = 1
+test_frame = 0.5        # in seconds
+test_interval = 0.25    # in seconds
+
 
 def generateSpectrum():
     spectrum = [0.0] * (sampling_rate * audio_duration)
 
     # selects the to-be-pressed pressed keys.
     key_count = int(random.random() * key_strokes + 1)
-    pressed_keys = [[0] * 3] * key_count
-    intervals = [0] * key_count
+    pressed_keys = []
+    intervals = []
 
     # calculates some constants for the audio interval
     v = audio_duration / key_interval
     u = key_max_duration[1] / key_interval
     pi2 = math.pi * 2
 
-    togglePrint("Generated Keys")
     for i in range(0, key_count): 
         # selects the pressed key.
         k = int(random.random() * len(PIANO_KEYS))
+        key = PIANO_KEYS[k]
 
         # calculates its start and end time.
         s = math.floor(random.random() * v) * key_interval
         d = max(key_max_duration[0], math.floor(random.random() * u) * key_interval)
         e = min(s + d, audio_duration)
 
+        # only adds unique keys 
+        if (pressed_keys.__contains__(key)): 
+            continue
+
         # adds the keys stroke.
-        key = PIANO_KEYS[k]
-        pressed_keys[i] = key
-        intervals[i] = (s, e)
-        togglePrint(str(k) + " - " + str(PIANO_KEYS[k]) + " : " + str((s, e)))
+        pressed_keys.append(key)
+        intervals.append((s, e))
 
         f = float(key[1]) / float(sampling_rate)
         l = 0; 
         rs = math.floor(s * sampling_rate)
         re = math.floor(e * sampling_rate)
 
-        rs = 0
-        re = sampling_rate * audio_duration
-
         for j in range(rs, re):
             m = math.sin(pi2 * l)
             l += f
             spectrum[j] += m
-    
-    return spectrum, pressed_keys, intervals
 
+    return spectrum, pressed_keys, intervals
 
 # generates a list of keys using an audio spectrum.
 def spectrumToKeys(spectrum, ds, de):
@@ -70,7 +70,6 @@ def spectrumToKeys(spectrum, ds, de):
     # calculates the stepsize and the -2 * PI.
     neg2pi = math.pi * -2
     
-    togglePrint("Found Keys:")
     # iterates through all possible piano keys.
     for j in range(0, len(PIANO_KEYS)):
         # selects  the current key, 
@@ -92,47 +91,70 @@ def spectrumToKeys(spectrum, ds, de):
 
         # calulates the mean square root
         m = math.sqrt(r * r + i * i) / delta
-        # print(m)
 
         # if m exceeds the threshold, 
         # it is considered played.
         if m > key_threshold * delta / sampling_rate: 
             keys.append(key)
-            togglePrint(str(j) + ": " + str(key))
 
     return keys
 
-def calculateError(generated, found):
-    error = 0.0
+# Generates list of keys and when they start and end. 
+def spectrumRangeToKeys(spectrum): 
+    key_strokes = [] 
 
-    for key in generated: 
-        if not found.__contains__(key): 
-            error += 1
+    # iterates through all audio frames.
+    s = 0.0 
+    while s < audio_duration - test_frame: 
+        # selects the discrete start and endpoints
+        e = s + test_frame
+        ds = math.floor(s * sampling_rate)
+        de = math.floor(e * sampling_rate)
+        
+        # generates keys on this interval
+        keys = spectrumToKeys(spectrum, ds, de)
 
-    for key in found: 
-        if not generated.__contains__(key): 
-            error += 1
+        # updates found keys if they persist along frames.
+        for key in keys: 
+            updated_key = False
 
-    error /= len(generated)
+            # backwards loop is faster.
+            j = len(key_strokes) - 1
+            while j >= 0: 
+                listed = key_strokes[j]
 
-    togglePrint("Error: " + str(error))
-    return error
+                # if it's the same key, it might be updated.
+                if listed[0] == key:
+                    # the key is updated if the timeframes overlap.
+                    if listed[1] <= s and listed[2] >= s: 
+                        u = (key, listed[1], e)
+                        key_strokes[j] = u
+                        updated_key = True
+                        break
+                j -= 1
 
+            # if no key was updated, the key is added. 
+            if not updated_key:
+                key_strokes.append((key, s, e))
+                
+        s += test_interval
+
+    return key_strokes
 
 def main(): 
-    average_error = 0
-    for i in range(0, test_runs): 
-        print(str(i + 1) + "/" + str(test_runs))
-        spectrum, generated_keys, intervals = generateSpectrum()
+    spectrum, generated_keys, intervals = generateSpectrum()
 
-        printArray(spectrum, "spectrum-out.csv")
+    print("Generated:")
+    for i in range(0, len(generated_keys)):
+        key = (generated_keys[i], intervals[i])
+        print(key)
 
+    found_keys = spectrumRangeToKeys(spectrum)
+    
+    print("Found:")
+    for key in found_keys: 
+        print(key)
 
-        found_keys = spectrumToKeys(spectrum, 0, sampling_rate)
-        error = calculateError(generated_keys, found_keys)
-        average_error += error
-    average_error /= test_runs
-    print("Average Error: " + str(average_error))
 
 if __name__ == "__main__": 
     main()
