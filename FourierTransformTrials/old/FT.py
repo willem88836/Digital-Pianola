@@ -1,3 +1,5 @@
+# Application of naive fourier transform using an with sin-waves generated audio spectrum. 
+
 import math
 import random
 

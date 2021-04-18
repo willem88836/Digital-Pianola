@@ -1,3 +1,6 @@
+# Applies naive fourier transform using actual piano frequencies, using a generated sin-wave audio spectrum.
+
+
 import math
 import random
 
@@ -112,14 +115,14 @@ PIANO_KEYS = [
     ['B8', 7902.13, 4.37]
 ] 
 
-sampling_size = 2048        # samples per second.
+sampling_size = 1024        # samples per second.
 sample_duration = 1        # duration of the sample in seconds.
 max_keys = 8                # maximum number of keys played simultaneously.
 key_threshold = 0.45         # threshold of a key to be recognized.
 
 # test parameters
-test_runs = 100
-should_print = False
+test_runs = 1
+should_print = True
 
 def togglePrint(message):
     if should_print: 
@@ -159,7 +162,7 @@ def generateSpectrum():
             m = math.sin(2 * math.pi * l)
             l += f
             spectrum[j] += m
-        
+            
     return spectrum, keys
 
 
@@ -193,7 +196,7 @@ def spectrumToKeys(spectrum):
 
         # calulates the mean square root
         m = math.sqrt(r * r + i * i) / sampling_size
-
+        
         # if m exceeds the threshold, 
         # it is considered played.
         if m > key_threshold * sample_duration: 
