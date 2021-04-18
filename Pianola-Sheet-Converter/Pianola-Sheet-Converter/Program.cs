@@ -8,6 +8,13 @@ using NAudio.Wave.SampleProviders;
 
 namespace Pianola_Sheet_Converter
 {
+	/* 
+		Stuff to look at: 
+			http://archive.oreilly.com/oreillyschool/courses/data-structures-algorithms/soundFiles.html 
+			https://cecm.indiana.edu/etext/digital_audio/chapter5_sample.shtml
+			https://en.wikipedia.org/wiki/Piano_key_frequencies
+		 */
+
 	class Program
 	{
 		static void Main(string[] args)
