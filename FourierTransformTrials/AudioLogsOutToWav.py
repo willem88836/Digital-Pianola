@@ -21,7 +21,7 @@ for entry in split:
         seq = seq + entry
     
 q = 0.0
-r = 0.0625
+r = 0.0421
 key_strokes = []
 for entry in seqs: 
     cleaned = entry.strip(" []")
@@ -58,5 +58,5 @@ for i in range(0, len(key_strokes)):
             m = math.sin(pi2 * l)
             spectrum[k + j] += m
             l += f
-
+print(spectrum)
 soundfile.write(relative_path('data\\generated_audio.wav'), spectrum, sampling_rate)
