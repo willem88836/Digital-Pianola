@@ -1,8 +1,19 @@
 
-def update_progress(progress, max_progress): 
-    p = progress / max_progress * 100
-    bar_length = 50
-    bar = int(progress / max_progress * bar_length)
-    bar_fill = bar_length - bar
-    print(f'\rProgress: {progress}/{max_progress} - {p:.2f}% [{bar * "#"}{bar_fill * " "}]', end='')
-        
+import threading
+
+class progress_bar: 
+    __current_progress = 0
+
+    def __init__(self, max_progress: int, bar_length: int) -> None:
+        self.max_progress = max_progress
+        self.bar_length = bar_length
+        self.__current_progress = 0
+        self.update_progress(0)
+
+    def update_progress(self, i) -> None:
+        self.__current_progress = i
+        p = float(self.__current_progress) / self.max_progress
+        length = int(p * self.bar_length)
+        bar_fill = self.bar_length - length
+        print(f'\rProgress: {self.__current_progress}/{self.max_progress} - {(p * 100):.2f}% [{length * "#"}{bar_fill * " "}]', end='')
+        self.__current_progress += 1

@@ -3,10 +3,14 @@ from joblib import Parallel, delayed
 import multiprocessing
 import math
 import librosa
+import soundfile
+from functools import cmp_to_key
 
 from piano import PIANO_KEYS
 from util import * 
 import progress_bar as pb
+
+progress = None
 
 class analysis_settings: 
     def __init__(self, seconds, key_threshold, test_interval, data_frame_size, max_processors) -> None:
@@ -17,9 +21,8 @@ class analysis_settings:
         self.max_processors = max_processors
 
 # generates a list of keys using an audio spectrum.
-def spectrum_to_keys(spectrum, frame_size, sampling_rate, key_threshold) -> tuple[list[tuple], list[float]]:
+def spectrum_to_keys(spectrum:list[float], frame_size:int, sampling_rate:int, key_threshold:float) -> list[tuple]:
     # the found keys container
-    key_magnitudes = []
     keys = []
 
     key_threshold = key_threshold / sampling_rate
@@ -52,26 +55,25 @@ def spectrum_to_keys(spectrum, frame_size, sampling_rate, key_threshold) -> tupl
         # if m exceeds the threshold, 
         # it is considered played.
         if mag > key_threshold:
-            keys.append(key)
-            key_magnitudes.append(mag)
+            keys.append([j, mag])
 
-    return keys, key_magnitudes
+    return keys
 
-def analyze_section(task_index, max_tasks, data_set, step_delta, data_frame_size, sampling_rate, key_threshold) -> list[tuple]: 
+def analyze_section(task_index:int, progress:pb.progress_bar, data_set:list[float], step_delta:int, data_frame_size:float, sampling_rate:int, key_threshold:float) -> list[tuple]: 
     keys = None
     try: 
         chunk_start = int(task_index * step_delta)
         chunk_end = chunk_start + data_frame_size
         data_chunk = data_set[chunk_start:chunk_end]
-        keys, key_magnitudes = spectrum_to_keys(data_chunk, data_frame_size, sampling_rate, key_threshold)
+        keys = spectrum_to_keys(data_chunk, data_frame_size, sampling_rate, key_threshold)
     except: 
         keys = []
         print(f'Task {task_index} failed...')
     finally: 
-        pb.update_progress(task_index, max_tasks)
+        progress.update_progress(task_index)
         return keys    
 
-def keystroke_analysis(filename: str, settings: analysis_settings) -> list[list[tuple]]:
+def keystroke_analysis(filename:str, settings:analysis_settings) -> list[list[tuple]]:
     audio_data, sampling_rate = librosa.load(filename)
     duration_in_seconds = len(audio_data) / sampling_rate
     duration_in_seconds = min(duration_in_seconds, settings.seconds)
@@ -89,27 +91,81 @@ def keystroke_analysis(filename: str, settings: analysis_settings) -> list[list[
     cpu_cores = min(multiprocessing.cpu_count(), settings.max_processors, step_count)
     
     header = f'Key Stroke Analysis:\n\
-        \tFile:\t\t\t{filename}\n\
-        \tLength:\t\t\t{duration_in_seconds:.4f} sec.\n\
-        \tSampling Frequency:\t{sampling_rate} Hz.\n\
-        \tRhythm:\t\t\t{beats_per_minute:.4f} BPM\n\
-        \tStep Delta:\t\t{step_delta:.4f} sec. {step_delta_sr} samples\n\
-        \tData Frame:\t\t{data_frame_size:.4f} sec. {data_frame_size_sr} samples\n\
-        \tStep Count:\t\t{step_count} steps\n\
-        \tKey Threshold:\t\t{key_threshold}\n\
-        \tCPU Cores: \t\t{cpu_cores} cores'
+        File:\t\t\t{filename}\n\
+        Length:\t\t\t{duration_in_seconds:.4f} sec.\n\
+        Sampling Frequency:\t{sampling_rate} Hz.\n\
+        Rhythm:\t\t\t{beats_per_minute:.4f} BPM\n\
+        Step Delta:\t\t{step_delta:.4f} sec. {step_delta_sr} samples\n\
+        Data Frame:\t\t{data_frame_size:.4f} sec. {data_frame_size_sr} samples\n\
+        Step Count:\t\t{step_count} steps\n\
+        Key Threshold:\t\t{key_threshold}\n\
+        CPU Cores: \t\t{cpu_cores} cores'
     print(header)
 
-    pb.update_progress(0, step_count)
+    progress = pb.progress_bar(step_count + 1, 50)
+    
+    key_map = Parallel(n_jobs=cpu_cores)(delayed(analyze_section)(i, progress, audio_data, step_delta_sr, data_frame_size_sr, sampling_rate, key_threshold) for i in range(0, step_count, 1))
+    condensed = condense_keystrokes(key_map, step_delta)
 
-    key_map = Parallel(n_jobs=cpu_cores)(delayed(analyze_section)(i, step_count, audio_data, step_delta_sr, data_frame_size_sr, sampling_rate, key_threshold) for i in range(0, step_count, 1))
+    progress.update_progress(step_count + 1)
 
-    pb.update_progress(step_count, step_count)
+    return condensed, key_map, header, duration_in_seconds
 
-    return key_map, header
+def condense_keystrokes(key_map:list[tuple], measure_interval:float) -> list[tuple]: 
+    recorded_strokes = []
+    current_time = 0.0
+    active_keys = dict()
+    passed_keys = set()
+
+    for keys in key_map: 
+        for key in keys: 
+            key_index = key[0]
+            key_magnitude = key[1] # TODO: use the derivative to figure out whether the key is pressed anew.
+
+            if not active_keys.__contains__(key_index): 
+                active_keys[key_index] = current_time
+
+            passed_keys.add(key_index)
+
+        released_keys = []
+        for key in active_keys: 
+            if not passed_keys.__contains__(key): 
+                released_keys.append(key)
+        
+        for l in released_keys: 
+            recorded_strokes.append([l, active_keys[l], current_time])
+            del active_keys[l]
+
+        passed_keys.clear()
+        current_time += measure_interval
+
+    return recorded_strokes
+
+def stroke_data_to_wav(key_strokes:list[tuple], length_in_seconds:int, sampling_rate:int) -> list[float]: 
+    sorted(key_strokes, key=cmp_to_key(lambda A, B: A[0] - B[0]))
+    audio = [0.0] * (length_in_seconds * sampling_rate)
+    
+    pi2 = math.pi * 2
+
+    for key in key_strokes: 
+        key_frequency = PIANO_KEYS[key[0]][1] / sampling_rate
+        l = key[1]
+        key_start = int(l * sampling_rate)
+        key_end = int(key[2] * sampling_rate)
+
+        for i in range(key_start, key_end): 
+            audio[i] += math.sin(pi2 * l)
+            l += key_frequency
+
+    return audio
 
 file_name = 'data\\Humdrum Days'
 file_path = relative_path(f'{file_name}.wav')
-settings = analysis_settings(4, 0.015, 32, 0.5, 7)
-key_map, header = keystroke_analysis(file_path, settings)
-open(f'{file_name}.out', mode="w").write(str(key_map))
+settings = analysis_settings(6, 0.006, 32, 0.5, 7)
+condensed, key_map, header, duration_in_seconds = keystroke_analysis(file_path, settings)
+
+open(f'{file_name}.out', mode="w").write(f'{header}\n\n{condensed}')
+
+sampling_rate = 22050
+generated_audio = stroke_data_to_wav(condensed, duration_in_seconds, sampling_rate)
+soundfile.write(f'{relative_path(file_name)} (generated).wav', generated_audio, sampling_rate)
